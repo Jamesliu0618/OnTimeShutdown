@@ -51,33 +51,52 @@ namespace Showdown
         [STAThread]
         static void Main(string[] args)
         {
+            // 設定控制台編碼為UTF-8，解決中文亂碼問題
+            Console.OutputEncoding = System.Text.Encoding.UTF8;
+            
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
             
-            // Initialize console for logging
+            // 初始化控制台
             AllocConsole();
             
             Console.WriteLine("=================================");
-            Console.WriteLine("Auto Shutdown Tool - v1.0");
+            Console.WriteLine("自動關機工具 - v1.1");
             Console.WriteLine("=================================");
             
-            // Load or create config
+            // 允許使用命令列參數立即測試關機功能
+            bool testShutdown = args.Length > 0 && args[0] == "--test-shutdown";
+            
+            // 載入配置
             config = LoadOrCreateConfig();
             
-            // Create system tray icon and menu
+            // 創建系統通知區域圖示
             InitializeSystemTrayIcon();
             
-            // Always hide the console window on startup
-            HideConsoleWindow();
+            // 如果不是測試關機，則隱藏控制台
+            if (!testShutdown)
+            {
+                HideConsoleWindow();
+            }
             
-            // Immediately check current time against shutdown time
-            Console.WriteLine("Checking current time against shutdown settings...");
+            // 檢查命令列參數
+            if (testShutdown)
+            {
+                Console.WriteLine("正在測試關機功能...");
+                Console.WriteLine("將在5秒後嘗試執行關機命令");
+                Thread.Sleep(5000);
+                ExecuteDirectShutdown();
+                return;
+            }
+            
+            // 立即檢查時間，並顯示下次關機時間
+            Console.WriteLine("檢查目前時間與關機設定...");
             ShowNextShutdownTime(config);
             
-            // Start the shutdown timer
+            // 啟動關機計時器
             StartShutdownTimer(config);
             
-            // Run the application
+            // 運行應用
             Application.Run();
         }
         
@@ -384,13 +403,13 @@ namespace Showdown
                 shutdownTimer.Dispose();
             }
             
-            // Create a timer that checks every 30 seconds
-            shutdownTimer = new System.Timers.Timer(30000); // 30 seconds
+            // Create a timer that checks every 10 seconds
+            shutdownTimer = new System.Timers.Timer(10000); // 10 seconds
             shutdownTimer.Elapsed += (sender, e) => CheckShutdownTime(config);
             shutdownTimer.AutoReset = true;
             shutdownTimer.Start();
             
-            Console.WriteLine("Shutdown timer started - checking every 30 seconds");
+            Console.WriteLine("關機計時器已啟動 - 每10秒檢查一次");
             
             // Do initial check immediately
             CheckShutdownTime(config);
@@ -403,55 +422,120 @@ namespace Showdown
                 lock (configLock)
                 {
                     if (!config.EnableAutoShutdown)
+                    {
                         return;
+                    }
                     
                     DateTime now = DateTime.Now;
                     DateTime shutdownTime = GetNextShutdownTime(config);
                     TimeSpan timeUntilShutdown = shutdownTime - now;
                     
-                    // If it's within 1 minute of shutdown time, prepare shutdown
-                    if (timeUntilShutdown.TotalMinutes <= 1 && timeUntilShutdown.TotalSeconds > 0)
+                    // 添加更多日誌信息，使用固定格式避免亂碼
+                    Console.WriteLine($"[DEBUG] 當前時間: {now.ToString("HH:mm:ss")}");
+                    Console.WriteLine($"[DEBUG] 計劃關機時間: {shutdownTime.ToString("HH:mm:ss")}");
+                    
+                    // 格式化剩餘時間顯示
+                    int remainHours = (int)timeUntilShutdown.TotalHours;
+                    int remainMinutes = timeUntilShutdown.Minutes;
+                    int remainSeconds = timeUntilShutdown.Seconds;
+                    Console.WriteLine($"[DEBUG] 剩餘時間: {remainHours}小時 {remainMinutes}分鐘 {remainSeconds}秒 (共{(int)timeUntilShutdown.TotalSeconds}秒)");
+                    
+                    // 直接測試關機功能 - 如果需要測試，取消這段註釋
+                    // if (true) {
+                    //     Console.WriteLine("正在測試關機功能...");
+                    //     ShutdownNow();
+                    //     return;
+                    // }
+                    
+                    // 如果時間小於10秒，直接執行關機
+                    if (timeUntilShutdown.TotalSeconds <= 10 && timeUntilShutdown.TotalSeconds > 0)
                     {
-                        Console.WriteLine($"Scheduled shutdown approaching. Shutdown will occur at {shutdownTime.ToShortTimeString()} (in {timeUntilShutdown.Seconds} seconds)");
+                        Console.WriteLine($"關機時間即將到來！將在 {shutdownTime.ToString("HH:mm:ss")} 關機 (還有 {remainSeconds} 秒)");
                         
-                        // Show balloon tip for upcoming shutdown
-                        if (trayIcon != null && timeUntilShutdown.TotalSeconds <= 60 && timeUntilShutdown.TotalSeconds > 10)
+                        // 顯示氣球提示
+                        if (trayIcon != null)
                         {
                             trayIcon.ShowBalloonTip(
-                                3000, 
-                                "Scheduled Shutdown",
-                                $"Computer will shut down in {(int)timeUntilShutdown.TotalSeconds} seconds.",
+                                5000,
+                                "即將關機",
+                                $"電腦將在 {remainSeconds} 秒後關機。",
                                 ToolTipIcon.Warning
                             );
                         }
                         
-                        // If we're within 5 seconds of shutdown time, execute shutdown
-                        if (timeUntilShutdown.TotalSeconds <= 5)
+                        // 如果時間非常接近（2秒內），執行關機
+                        if (timeUntilShutdown.TotalSeconds <= 2)
                         {
-                            Console.WriteLine("EXECUTING SCHEDULED SHUTDOWN NOW");
+                            Console.WriteLine("正在執行關機指令...");
                             
-                            // Final balloon notification
+                            // 最終通知
                             if (trayIcon != null)
                             {
                                 trayIcon.ShowBalloonTip(
                                     3000, 
-                                    "Shutting Down",
-                                    "Computer is shutting down now.",
+                                    "正在關機",
+                                    "電腦正在關機...",
                                     ToolTipIcon.Info
                                 );
                             }
                             
-                            ExecuteShutdown(config);
+                            // 立即執行關機，不等待
+                            ExecuteDirectShutdown();
                             
-                            // Stop the timer since we're shutting down
+                            // 停止計時器
                             shutdownTimer.Stop();
                         }
+                    }
+                    // 如果在關機時間的1分鐘內
+                    else if (timeUntilShutdown.TotalMinutes <=
+1 && timeUntilShutdown.TotalSeconds > 0)
+                    {
+                        Console.WriteLine($"關機時間接近！將在 {remainMinutes}分鐘{remainSeconds}秒後關機");
                     }
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Error checking shutdown time: {ex.Message}");
+                Console.WriteLine($"檢查關機時間時發生錯誤: {ex.Message}");
+                Console.WriteLine($"錯誤詳情: {ex.ToString()}");
+            }
+        }
+        
+        // 直接執行關機，不使用cmd中間層
+        static void ExecuteDirectShutdown()
+        {
+            try
+            {
+                // 使用ProcessStartInfo直接執行shutdown命令
+                Console.WriteLine("正在執行關機命令...");
+                
+                // 使用進程啟動關機命令
+                ProcessStartInfo psi = new ProcessStartInfo
+                {
+                    FileName = "shutdown",
+                    Arguments = "/s /t 0", // 立即關機
+                    CreateNoWindow = true,
+                    UseShellExecute = false
+                };
+                
+                Process.Start(psi);
+                Console.WriteLine("關機命令已發送！");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"執行關機時發生錯誤: {ex.Message}");
+                
+                // 嘗試使用備用方法
+                try
+                {
+                    Console.WriteLine("嘗試使用備用方法關機...");
+                    Process.Start("shutdown", "/s /t 0");
+                    Console.WriteLine("備用關機命令已發送！");
+                }
+                catch (Exception ex2)
+                {
+                    Console.WriteLine($"備用關機方法也失敗: {ex2.Message}");
+                }
             }
         }
         
