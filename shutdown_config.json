@@ -1,6 +1,7 @@
 {
-  "Hour": 17,
+  "Hour": 9,
   "Minute": 30,
   "Second": 0,
-  "ForceShutdown": false
+  "ForceShutdown": false,
+  "EnableAutoShutdown": true
 }

@@ -501,8 +501,8 @@ namespace Showdown
                 }
                 else
                 {
-                    // Include system update handling (parameter /g indicates shutdown after update)
-                    command = "shutdown /g /t 0";
+                    // 正常關機指令 (使用 /s 參數表示關機)
+                    command = "shutdown /s /t 0"; 
                 }
 
                 Console.WriteLine($"Executing shutdown command: {command}");
