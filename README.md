@@ -1,69 +1,94 @@
-# Auto Shutdown Tool
+# 自動關機工具
 
-This is a simple auto shutdown tool that allows you to set shutdown time and supports shutdown after system updates.
+這是一個簡單的自動關機工具，可讓您設定關機時間並支援系統更新後關機。
 
-## Features
+## 功能特色
 
-1. Set shutdown time (hour, minute, second)
-2. Support force shutdown option
-3. Handle system updates by ensuring shutdown after updates
-4. Configuration stored in an easy-to-edit text file (JSON format)
-5. Support for auto-start on Windows boot (minimized)
+1. 設定關機時間（時、分、秒）
+2. 支援強制關機選項
+3. 處理系統更新，確保更新後關機
+4. 配置儲存在易於編輯的文字檔（JSON 格式）
+5. 支援 Windows 開機時自動啟動（最小化）
+6. 在指定時間自動關機
+7. 系統通知區域圖示及右鍵選單，方便管理
 
-## How to Use
+## 系統通知區域功能
 
-1. After running the program, you will see the main menu
-2. Choose one of the following options:
-   - 1: Show current configuration
-   - 2: Modify shutdown time
-   - 3: Toggle force shutdown
-   - 4: Shutdown now
-   - 5: Exit program
+本應用程式在系統通知區域（螢幕右下角）運行，方便快速訪問：
 
-## Auto-Start on Windows Boot
+- **雙擊** 通知區域圖示可切換主控台視窗的顯示/隱藏
+- **右鍵點擊** 圖示可開啟選單，包含以下選項：
+  - 顯示/隱藏主控台
+  - 顯示當前配置
+  - 修改關機時間
+  - 啟用/禁用自動關機
+  - 切換強制關機
+  - 立即關機
+  - 退出程式
 
-To make the application start automatically when Windows boots:
+通知區域圖示的提示文字會顯示下一次排程關機時間。
 
-1. Build the application using `dotnet build`
-2. Copy the `AutoStartShutdownTool.bat` script to the Windows Startup folder:
-   - Press `Win + R`, type `shell:startup` and press Enter
-   - Copy the `AutoStartShutdownTool.bat` script to this folder
-   - The application will now start minimized on Windows boot
+## 使用方法
 
-You can also start the application minimized by running:
+1. 執行程式 - 它會自動最小化到系統通知區域
+2. 在通知區域中右鍵點擊圖示來存取選單
+3. 使用「修改關機時間」來設定您想要的關機時間
+4. 確保「啟用自動關機」已勾選
+5. 程式將在指定時間自動關閉您的電腦
+
+## 自動關機功能
+
+程式會自動監控時間，並在設定的時間執行關機。例如，如果您設定時間為 9:30:00，電腦將在每天的這個時間自動關機。
+
+- 您可以從通知區域選單中啟用/禁用此功能
+- 程式會在關機前顯示通知
+- 自動關機狀態會顯示在配置中和通知區域圖示的提示文字中
+
+## Windows 開機自動啟動
+
+要讓應用程式在 Windows 開機時自動啟動：
+
+1. 使用 `dotnet build` 編譯應用程式
+2. 將 `AutoStartShutdownTool.bat` 腳本複製到 Windows 啟動資料夾：
+   - 按 `Win + R`，輸入 `shell:startup` 並按 Enter
+   - 將 `AutoStartShutdownTool.bat` 腳本複製到此資料夾
+   - 應用程式現在會在 Windows 開機時自動啟動並最小化到系統通知區域
+
+您也可以通過以下方式以最小化狀態啟動應用程式：
 ```
 Showdown.exe --minimized
 ```
-or
+或
 ```
 Showdown.exe -m
 ```
 
-## Configuration File
+## 配置檔案
 
-The program will automatically create a `shutdown_config.json` file in the same directory. You can directly edit this file to modify settings:
+程式會在同一目錄下自動創建 `shutdown_config.json` 文件。您可以直接編輯此文件來修改設定：
 
 ```json
 {
   "Hour": 17,
   "Minute": 30,
   "Second": 0,
-  "ForceShutdown": false
+  "ForceShutdown": false,
+  "EnableAutoShutdown": true
 }
 ```
 
-## System Requirements
+## 系統需求
 
-- Windows operating system
-- .NET 6.0 or higher
+- Windows 作業系統
+- .NET 6.0 或更高版本
 
-## Build and Run
+## 編譯與執行
 
 ```bash
-# Build the program
+# 編譯程式
 dotnet build
 
-# Run the program
+# 執行程式
 dotnet run
 
 # Run minimized

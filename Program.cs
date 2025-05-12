@@ -4,6 +4,10 @@ using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Runtime.InteropServices;
+using System.Threading;
+using System.Timers;
+using System.Windows.Forms;
+using System.Drawing;
 
 namespace Showdown
 {
@@ -14,17 +18,23 @@ namespace Showdown
         public int Minute { get; set; } = 30;
         public int Second { get; set; } = 0;
         public bool ForceShutdown { get; set; } = false;
+        public bool EnableAutoShutdown { get; set; } = true;
 
         public override string ToString()
         {
             return $"Shutdown time set to: {Hour}:{Minute}:{Second}" +
-                   $"{(ForceShutdown ? " (Force Shutdown)" : "")}";
+                   $"{(ForceShutdown ? " (Force Shutdown)" : "")}" +
+                   $", Auto shutdown: {(EnableAutoShutdown ? "Enabled" : "Disabled")}";
         }
     }
 
     class Program
     {
         private static readonly string ConfigPath = "shutdown_config.json";
+        private static System.Timers.Timer shutdownTimer;
+        private static NotifyIcon trayIcon;
+        private static ShutdownConfig config;
+        private static readonly Object configLock = new Object();
         
         // Import Windows API functions for window minimization
         [DllImport("kernel32.dll")]
@@ -36,24 +46,231 @@ namespace Showdown
         // Show window commands
         private const int SW_HIDE = 0;
         private const int SW_MINIMIZE = 6;
+        private const int SW_SHOW = 5;
 
+        [STAThread]
         static void Main(string[] args)
         {
-            // Check if program should start minimized
-            bool startMinimized = args.Length > 0 && (args[0] == "--minimized" || args[0] == "-m");
+            Application.EnableVisualStyles();
+            Application.SetCompatibleTextRenderingDefault(false);
             
-            if (startMinimized)
+            // Initialize console for logging
+            AllocConsole();
+            
+            Console.WriteLine("=================================");
+            Console.WriteLine("Auto Shutdown Tool - v1.0");
+            Console.WriteLine("=================================");
+            
+            // Load or create config
+            config = LoadOrCreateConfig();
+            
+            // Create system tray icon and menu
+            InitializeSystemTrayIcon();
+            
+            // Always hide the console window on startup
+            HideConsoleWindow();
+            
+            // Immediately check current time against shutdown time
+            Console.WriteLine("Checking current time against shutdown settings...");
+            ShowNextShutdownTime(config);
+            
+            // Start the shutdown timer
+            StartShutdownTimer(config);
+            
+            // Run the application
+            Application.Run();
+        }
+        
+        static void InitializeSystemTrayIcon()
+        {
+            trayIcon = new NotifyIcon()
             {
-                // Get handle to console window and minimize it
-                IntPtr handle = GetConsoleWindow();
-                ShowWindow(handle, SW_MINIMIZE);
+                Icon = SystemIcons.Application,
+                Text = "Auto Shutdown Tool",
+                Visible = true
+            };
+            
+            // Create context menu
+            ContextMenuStrip menu = new ContextMenuStrip();
+            
+            menu.Items.Add("Show Console", null, OnShowConsole);
+            menu.Items.Add("Hide Console", null, OnHideConsole);
+            menu.Items.Add("-"); // Separator
+            
+            menu.Items.Add("Show Configuration", null, OnShowConfig);
+            menu.Items.Add("Modify Shutdown Time", null, OnModifyTime);
+            
+            ToolStripMenuItem autoShutdownItem = new ToolStripMenuItem("Enable Auto Shutdown");
+            autoShutdownItem.Checked = config.EnableAutoShutdown;
+            autoShutdownItem.Click += OnToggleAutoShutdown;
+            menu.Items.Add(autoShutdownItem);
+            
+            ToolStripMenuItem forceShutdownItem = new ToolStripMenuItem("Force Shutdown");
+            forceShutdownItem.Checked = config.ForceShutdown;
+            forceShutdownItem.Click += OnToggleForceShutdown;
+            menu.Items.Add(forceShutdownItem);
+            
+            menu.Items.Add("-"); // Separator
+            menu.Items.Add("Shutdown Now", null, OnShutdownNow);
+            menu.Items.Add("Exit", null, OnExit);
+            
+            trayIcon.ContextMenuStrip = menu;
+            
+            // Double-click to toggle console visibility
+            trayIcon.DoubleClick += OnTrayIconDoubleClick;
+        }
+        
+        static void OnTrayIconDoubleClick(object sender, EventArgs e)
+        {
+            ToggleConsoleVisibility();
+        }
+        
+        static void OnShowConsole(object sender, EventArgs e)
+        {
+            ShowConsoleWindow();
+        }
+        
+        static void OnHideConsole(object sender, EventArgs e)
+        {
+            HideConsoleWindow();
+        }
+        
+        static void OnShowConfig(object sender, EventArgs e)
+        {
+            ShowConsoleWindow();
+            Console.WriteLine($"Current configuration: {config}");
+            ShowNextShutdownTime(config);
+        }
+        
+        static void OnModifyTime(object sender, EventArgs e)
+        {
+            ShowConsoleWindow();
+            ModifyShutdownTime(config);
+            SaveConfig(config);
+            
+            // Update checked state of menu items
+            UpdateTrayMenuItems();
+        }
+        
+        static void OnToggleAutoShutdown(object sender, EventArgs e)
+        {
+            lock (configLock)
+            {
+                config.EnableAutoShutdown = !config.EnableAutoShutdown;
+                Console.WriteLine($"Auto shutdown set to: {(config.EnableAutoShutdown ? "Enabled" : "Disabled")}");
+                SaveConfig(config);
+                
+                // Update menu item checked state
+                if (sender is ToolStripMenuItem item)
+                {
+                    item.Checked = config.EnableAutoShutdown;
+                }
+            }
+        }
+        
+        static void OnToggleForceShutdown(object sender, EventArgs e)
+        {
+            lock (configLock)
+            {
+                config.ForceShutdown = !config.ForceShutdown;
+                Console.WriteLine($"Force shutdown set to: {(config.ForceShutdown ? "Enabled" : "Disabled")}");
+                SaveConfig(config);
+                
+                // Update menu item checked state
+                if (sender is ToolStripMenuItem item)
+                {
+                    item.Checked = config.ForceShutdown;
+                }
+            }
+        }
+        
+        static void OnShutdownNow(object sender, EventArgs e)
+        {
+            ExecuteShutdown(config);
+        }
+        
+        static void OnExit(object sender, EventArgs e)
+        {
+            trayIcon.Visible = false;
+            trayIcon.Dispose();
+            
+            // Stop the shutdown timer
+            if (shutdownTimer != null)
+            {
+                shutdownTimer.Stop();
+                shutdownTimer.Dispose();
             }
             
-            Console.WriteLine("Auto Shutdown Tool - v1.0");
-            
-            var config = LoadOrCreateConfig();
-            DisplayMenu(config);
+            Application.Exit();
         }
+        
+        static void UpdateTrayMenuItems()
+        {
+            if (trayIcon?.ContextMenuStrip != null)
+            {
+                foreach (var item in trayIcon.ContextMenuStrip.Items)
+                {
+                    if (item is ToolStripMenuItem menuItem)
+                    {
+                        if (menuItem.Text == "Enable Auto Shutdown")
+                        {
+                            menuItem.Checked = config.EnableAutoShutdown;
+                        }
+                        else if (menuItem.Text == "Force Shutdown")
+                        {
+                            menuItem.Checked = config.ForceShutdown;
+                        }
+                    }
+                }
+            }
+        }
+        
+        static void ToggleConsoleVisibility()
+        {
+            IntPtr handle = GetConsoleWindow();
+            if (handle != IntPtr.Zero)
+            {
+                if (IsConsoleVisible())
+                {
+                    ShowWindow(handle, SW_HIDE);
+                }
+                else
+                {
+                    ShowWindow(handle, SW_SHOW);
+                }
+            }
+        }
+        
+        static bool IsConsoleVisible()
+        {
+            return IsWindowVisible(GetConsoleWindow());
+        }
+        
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        static extern bool IsWindowVisible(IntPtr hWnd);
+        
+        static void ShowConsoleWindow()
+        {
+            IntPtr handle = GetConsoleWindow();
+            if (handle != IntPtr.Zero)
+            {
+                ShowWindow(handle, SW_SHOW);
+            }
+        }
+        
+        static void HideConsoleWindow()
+        {
+            IntPtr handle = GetConsoleWindow();
+            if (handle != IntPtr.Zero)
+            {
+                ShowWindow(handle, SW_HIDE);
+            }
+        }
+        
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        static extern bool AllocConsole();
 
         static ShutdownConfig LoadOrCreateConfig()
         {
@@ -87,57 +304,161 @@ namespace Showdown
                 string json = JsonSerializer.Serialize(config, options);
                 File.WriteAllText(ConfigPath, json);
                 Console.WriteLine("Configuration saved");
+                
+                // Show updated shutdown time
+                ShowNextShutdownTime(config);
+                
+                // Restart the shutdown timer with updated settings
+                RestartShutdownTimer(config);
+                
+                // Update tray icon tooltip
+                UpdateTrayIconTooltip();
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"Error saving configuration: {ex.Message}");
             }
         }
-
-        static void DisplayMenu(ShutdownConfig config)
+        
+        static void UpdateTrayIconTooltip()
         {
-            while (true)
+            if (trayIcon != null)
             {
-                Console.WriteLine("\n===== Auto Shutdown Tool Menu =====");
-                Console.WriteLine("1. Show Current Configuration");
-                Console.WriteLine("2. Modify Shutdown Time");
-                Console.WriteLine("3. Toggle Force Shutdown");
-                Console.WriteLine("4. Shutdown Now");
-                Console.WriteLine("5. Exit Program");
-                Console.Write("Choose an option (1-5): ");
+                DateTime shutdownTime = GetNextShutdownTime(config);
+                string status = config.EnableAutoShutdown 
+                    ? $"Next shutdown: {shutdownTime.ToShortTimeString()}" 
+                    : "Auto shutdown disabled";
+                
+                trayIcon.Text = $"Auto Shutdown Tool - {status}";
+            }
+        }
+        
+        static DateTime GetNextShutdownTime(ShutdownConfig config)
+        {
+            DateTime now = DateTime.Now;
+            DateTime shutdownTime = new DateTime(
+                now.Year, now.Month, now.Day, 
+                config.Hour, config.Minute, config.Second);
+                
+            // If the shutdown time is in the past for today, set it for tomorrow
+            if (now > shutdownTime)
+            {
+                shutdownTime = shutdownTime.AddDays(1);
+            }
+            
+            return shutdownTime;
+        }
 
-                if (int.TryParse(Console.ReadLine(), out int choice))
+        static void ShowNextShutdownTime(ShutdownConfig config)
+        {
+            if (!config.EnableAutoShutdown)
+            {
+                Console.WriteLine("Auto shutdown is currently DISABLED");
+                return;
+            }
+            
+            DateTime now = DateTime.Now;
+            DateTime shutdownTime = GetNextShutdownTime(config);
+            
+            // Update tray icon tooltip with shutdown time
+            UpdateTrayIconTooltip();
+            
+            // If shutdown time is tomorrow
+            if (shutdownTime.Date > now.Date)
+            {
+                Console.WriteLine($"Next scheduled shutdown: TOMORROW at {shutdownTime.ToShortTimeString()}");
+            }
+            else
+            {
+                TimeSpan timeLeft = shutdownTime - now;
+                Console.WriteLine($"Next scheduled shutdown: TODAY at {shutdownTime.ToShortTimeString()} (in {timeLeft.Hours}h {timeLeft.Minutes}m {timeLeft.Seconds}s)");
+            }
+        }
+
+        static void StartShutdownTimer(ShutdownConfig config)
+        {
+            // Stop existing timer if running
+            if (shutdownTimer != null)
+            {
+                shutdownTimer.Stop();
+                shutdownTimer.Dispose();
+            }
+            
+            // Create a timer that checks every 30 seconds
+            shutdownTimer = new System.Timers.Timer(30000); // 30 seconds
+            shutdownTimer.Elapsed += (sender, e) => CheckShutdownTime(config);
+            shutdownTimer.AutoReset = true;
+            shutdownTimer.Start();
+            
+            Console.WriteLine("Shutdown timer started - checking every 30 seconds");
+            
+            // Do initial check immediately
+            CheckShutdownTime(config);
+        }
+        
+        static void CheckShutdownTime(ShutdownConfig config)
+        {
+            try
+            {
+                lock (configLock)
                 {
-                    switch (choice)
+                    if (!config.EnableAutoShutdown)
+                        return;
+                    
+                    DateTime now = DateTime.Now;
+                    DateTime shutdownTime = GetNextShutdownTime(config);
+                    TimeSpan timeUntilShutdown = shutdownTime - now;
+                    
+                    // If it's within 1 minute of shutdown time, prepare shutdown
+                    if (timeUntilShutdown.TotalMinutes <= 1 && timeUntilShutdown.TotalSeconds > 0)
                     {
-                        case 1:
-                            Console.WriteLine($"Current configuration: {config}");
-                            break;
-                        case 2:
-                            ModifyShutdownTime(config);
-                            SaveConfig(config);
-                            break;
-                        case 3:
-                            config.ForceShutdown = !config.ForceShutdown;
-                            Console.WriteLine($"Force shutdown set to: {(config.ForceShutdown ? "Enabled" : "Disabled")}");
-                            SaveConfig(config);
-                            break;
-                        case 4:
+                        Console.WriteLine($"Scheduled shutdown approaching. Shutdown will occur at {shutdownTime.ToShortTimeString()} (in {timeUntilShutdown.Seconds} seconds)");
+                        
+                        // Show balloon tip for upcoming shutdown
+                        if (trayIcon != null && timeUntilShutdown.TotalSeconds <= 60 && timeUntilShutdown.TotalSeconds > 10)
+                        {
+                            trayIcon.ShowBalloonTip(
+                                3000, 
+                                "Scheduled Shutdown",
+                                $"Computer will shut down in {(int)timeUntilShutdown.TotalSeconds} seconds.",
+                                ToolTipIcon.Warning
+                            );
+                        }
+                        
+                        // If we're within 5 seconds of shutdown time, execute shutdown
+                        if (timeUntilShutdown.TotalSeconds <= 5)
+                        {
+                            Console.WriteLine("EXECUTING SCHEDULED SHUTDOWN NOW");
+                            
+                            // Final balloon notification
+                            if (trayIcon != null)
+                            {
+                                trayIcon.ShowBalloonTip(
+                                    3000, 
+                                    "Shutting Down",
+                                    "Computer is shutting down now.",
+                                    ToolTipIcon.Info
+                                );
+                            }
+                            
                             ExecuteShutdown(config);
-                            break;
-                        case 5:
-                            Console.WriteLine("Program exited");
-                            return;
-                        default:
-                            Console.WriteLine("Invalid choice, please try again");
-                            break;
+                            
+                            // Stop the timer since we're shutting down
+                            shutdownTimer.Stop();
+                        }
                     }
                 }
-                else
-                {
-                    Console.WriteLine("Please enter a valid number");
-                }
             }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error checking shutdown time: {ex.Message}");
+            }
+        }
+        
+        static void RestartShutdownTimer(ShutdownConfig config)
+        {
+            // Simply restart the timer with new config
+            StartShutdownTimer(config);
         }
 
         static void ModifyShutdownTime(ShutdownConfig config)
