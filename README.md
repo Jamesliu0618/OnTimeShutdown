@@ -18,13 +18,13 @@
 
 - **雙擊** 通知區域圖示可切換主控台視窗的顯示/隱藏
 - **右鍵點擊** 圖示可開啟選單，包含以下選項：
-  - 顯示/隱藏主控台
-  - 顯示當前配置
-  - 修改關機時間
-  - 啟用/禁用自動關機
-  - 切換強制關機
-  - 立即關機
-  - 退出程式
+    - 顯示/隱藏主控台
+    - 顯示當前配置
+    - 修改關機時間
+    - 啟用/禁用自動關機
+    - 切換強制關機
+    - 立即關機
+    - 退出程式
 
 通知區域圖示的提示文字會顯示下一次排程關機時間。
 
@@ -50,15 +50,18 @@
 
 1. 使用 `dotnet build` 編譯應用程式
 2. 將 `AutoStartShutdownTool.bat` 腳本複製到 Windows 啟動資料夾：
-   - 按 `Win + R`，輸入 `shell:startup` 並按 Enter
-   - 將 `AutoStartShutdownTool.bat` 腳本複製到此資料夾
-   - 應用程式現在會在 Windows 開機時自動啟動並最小化到系統通知區域
+    - 按 `Win + R`，輸入 `shell:startup` 並按 Enter
+    - 將 `AutoStartShutdownTool.bat` 腳本複製到此資料夾
+    - 應用程式現在會在 Windows 開機時自動啟動並最小化到系統通知區域
 
 您也可以通過以下方式以最小化狀態啟動應用程式：
+
 ```
 Showdown.exe --minimized
 ```
+
 或
+
 ```
 Showdown.exe -m
 ```
