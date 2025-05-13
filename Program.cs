@@ -26,10 +26,12 @@ namespace Showdown
 		private const           int                 SW_MINIMIZE = 6;
 		private const           int                 SW_SHOW     = 5;
 		private static readonly string              ConfigPath  = "shutdown_config.json";
+		private static readonly string              LogPath     = "shutdown_log.txt"; // 新增日誌檔案路徑
 		private static          System.Timers.Timer shutdownTimer;
 		private static          NotifyIcon          trayIcon;
 		private static          ShutdownConfig      config;
 		private static readonly object              configLock = new object();
+		private static          int                 shutdownAttempts = 0; // 關機嘗試次數
 
 		// Import Windows API functions for window minimization
 		[DllImport("kernel32.dll")]
@@ -419,14 +421,30 @@ namespace Showdown
 					int remainSeconds = timeUntilShutdown.Seconds;
 					Console.WriteLine($"[DEBUG] Time remaining: {remainHours} hours {remainMinutes} minutes {remainSeconds} seconds (total {(int)timeUntilShutdown.TotalSeconds} seconds)");
 
-					// Direct test of shutdown functionality - uncomment if testing is needed
-					// if (true) {
-					//     Console.WriteLine("Testing shutdown functionality...");
-					//     ShutdownNow();
-					//     return;
-					// }
-
-					// If time is less than 10 seconds, execute shutdown directly
+					// 重要：使用總秒數進行更精確的比較，避免小數點問題
+					double totalSeconds = timeUntilShutdown.TotalSeconds;
+					
+					// 如果時間已到或已過（允許0.5秒誤差），立即執行關機
+					if(totalSeconds <= 0.5 && totalSeconds > -60) // 允許0.5秒誤差，且不超過1分鐘的過期時間
+					{
+						LogMessage("預定關機時間已到達，立即執行關機命令");
+						Console.WriteLine("預定關機時間已到達，準備關機...");
+						
+						// 顯示通知
+						if(trayIcon != null)
+						{
+							trayIcon.ShowBalloonTip(3000, "電腦關機", "電腦正在關機中...", ToolTipIcon.Info);
+						}
+						
+						// 執行關機，不等待
+						ExecuteDirectShutdown();
+						
+						// 停止計時器
+						shutdownTimer.Stop();
+						return;
+					}
+					
+					// 如果時間低於10秒，準備關機
 					if((timeUntilShutdown.TotalSeconds <= 10) && (timeUntilShutdown.TotalSeconds > 0))
 					{
 						Console.WriteLine($"Shutdown time approaching! Will shutdown at {shutdownTime.ToString("HH:mm:ss")} ({remainSeconds} seconds remaining)");
@@ -437,26 +455,27 @@ namespace Showdown
 							trayIcon.ShowBalloonTip(5000, "Shutdown Imminent", $"Computer will shutdown in {remainSeconds} seconds.", ToolTipIcon.Warning);
 						}
 
-						// If time is very close (within 2 seconds), execute shutdown
+						// 如果時間很接近（2秒以內），執行關機
 						if(timeUntilShutdown.TotalSeconds <= 2)
 						{
+							LogMessage("關機時間到達2秒內，立即執行關機");
 							Console.WriteLine("Executing shutdown command...");
 
-							// Final notification
+							// 最後通知
 							if(trayIcon != null)
 							{
 								trayIcon.ShowBalloonTip(3000, "Shutting Down", "Computer is now shutting down...", ToolTipIcon.Info);
 							}
 
-							// Execute shutdown immediately, don't wait
+							// 立即執行關機，不等待
 							ExecuteDirectShutdown();
 
-							// Stop timer
+							// 停止計時器
 							shutdownTimer.Stop();
 						}
 					}
 
-					// If within 1 minute of shutdown time
+					// 如果在1分鐘內關機
 					else if((timeUntilShutdown.TotalMinutes <= 1) && (timeUntilShutdown.TotalSeconds > 0))
 					{
 						Console.WriteLine($"Shutdown time approaching! Will shutdown in {remainMinutes} minutes and {remainSeconds} seconds");
@@ -465,49 +484,115 @@ namespace Showdown
 			}
 			catch(Exception ex)
 			{
+				string errorMsg = $"檢查關機時間發生錯誤: {ex.Message}";
+				LogMessage(errorMsg);
 				Console.WriteLine($"Error checking shutdown time: {ex.Message}");
 				Console.WriteLine($"Error details: {ex}");
 			}
 		}
-
 		// Directly execute shutdown without using cmd intermediate layer
 		private static void ExecuteDirectShutdown()
 		{
 			try
 			{
+				// 增加關機嘗試次數
+				shutdownAttempts++;
+				LogMessage($"開始第 {shutdownAttempts} 次關機嘗試");
+				
 				// Use ProcessStartInfo to directly execute shutdown command
 				Console.WriteLine("Executing shutdown command...");
+
+				// 嘗試使用強制關機參數
+				string arguments = config.ForceShutdown ? "/s /f /t 0" : "/s /t 0";
+				LogMessage($"執行關機命令: shutdown {arguments}");
 
 				// Use process to launch shutdown command
 				ProcessStartInfo psi = new ProcessStartInfo
 									   {
 										   FileName = "shutdown",
-										   Arguments = "/s /t 0", // Immediate shutdown
+										   Arguments = arguments,
 										   CreateNoWindow = true,
-										   UseShellExecute = false,
+										   UseShellExecute = true, // 改為true以允許提升權限
+										   Verb = "runas", // 嘗試以管理員權限執行
 									   };
 
-				Process.Start(psi);
+				Process? process = Process.Start(psi);
+				LogMessage("關機命令已發送!");
 				Console.WriteLine("Shutdown command sent!");
+				
+				// 確保程序有足夠時間執行
+				Thread.Sleep(3000);
 			}
 			catch(Exception ex)
 			{
+				string errorMsg = $"關機執行錯誤: {ex.Message}";
+				LogMessage(errorMsg);
 				Console.WriteLine($"Error executing shutdown: {ex.Message}");
 
 				// Try alternate method
 				try
 				{
+					LogMessage("嘗試使用替代方法關機...");
 					Console.WriteLine("Attempting to use alternate method for shutdown...");
-					Process.Start("shutdown", "/s /t 0");
+					
+					// 使用cmd執行關機命令
+					ProcessStartInfo cmdPsi = new ProcessStartInfo
+					{
+						FileName = "cmd.exe",
+						Arguments = $"/c shutdown /s /f /t 0",  // 強制使用/f參數
+						CreateNoWindow = true,
+						UseShellExecute = true,
+						Verb = "runas", // 嘗試以管理員權限執行
+					};
+					
+					Process.Start(cmdPsi);
+					LogMessage("替代關機命令已發送!");
 					Console.WriteLine("Alternate shutdown command sent!");
+					
+					// 確保程序有足夠時間執行
+					Thread.Sleep(3000);
 				}
 				catch(Exception ex2)
 				{
+					LogMessage($"替代關機方法也失敗: {ex2.Message}");
 					Console.WriteLine($"Alternate shutdown method also failed: {ex2.Message}");
+					
+					// 最後嘗試
+					try
+					{
+						LogMessage("嘗試最終關機方法...");
+						Process.Start("shutdown", "-s -f -t 0");
+						Thread.Sleep(3000);
+					}
+					catch (Exception ex3)
+					{
+						LogMessage($"所有關機方法都失敗: {ex3.Message}");
+					}
 				}
 			}
 		}
-
+		
+		// 新增記錄方法
+		private static void LogMessage(string message)
+		{
+			try
+			{
+				string timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+				string logEntry = $"[{timestamp}] {message}";
+				
+				// 寫入檔案
+				File.AppendAllText(LogPath, logEntry + Environment.NewLine);
+				
+				// 同時在控制台顯示
+				Console.WriteLine($"[LOG] {message}");
+			}
+			catch (Exception ex)
+			{
+				// 不處理記錄過程中的錯誤 - 避免遞迴
+				Console.WriteLine($"Failed to write log: {ex.Message}");
+			}
+		}
+		
 		private static void RestartShutdownTimer(ShutdownConfig config)
 		{
 			// Simply restart the timer with new config
@@ -516,10 +601,8 @@ namespace Showdown
 
 		private static void ModifyShutdownTime(ShutdownConfig config)
 		{
-			Console.WriteLine("Modify shutdown time (press Enter to keep current value)");
-
-			Console.Write($"Hour (0-23) [{config.Hour}]: ");
-			string hourInput = Console.ReadLine();
+			Console.WriteLine("Modify shutdown time (press Enter to keep current value)");			Console.Write($"Hour (0-23) [{config.Hour}]: ");
+			string hourInput = Console.ReadLine() ?? "";
 
 			if(!string.IsNullOrWhiteSpace(hourInput) && int.TryParse(hourInput, out int hour) && (hour >= 0) && (hour <= 23))
 			{
@@ -527,7 +610,7 @@ namespace Showdown
 			}
 
 			Console.Write($"Minute (0-59) [{config.Minute}]: ");
-			string minuteInput = Console.ReadLine();
+			string minuteInput = Console.ReadLine() ?? "";
 
 			if(!string.IsNullOrWhiteSpace(minuteInput) && int.TryParse(minuteInput, out int minute) && (minute >= 0) && (minute <= 59))
 			{
@@ -535,7 +618,7 @@ namespace Showdown
 			}
 
 			Console.Write($"Second (0-59) [{config.Second}]: ");
-			string secondInput = Console.ReadLine();
+			string secondInput = Console.ReadLine() ?? "";
 
 			if(!string.IsNullOrWhiteSpace(secondInput) && int.TryParse(secondInput, out int second) && (second >= 0) && (second <= 59))
 			{
@@ -549,27 +632,52 @@ namespace Showdown
 		{
 			try
 			{
+				// 增加關機嘗試次數
+				shutdownAttempts++;
+				LogMessage($"開始第 {shutdownAttempts} 次關機嘗試 (由使用者手動觸發)");
+				
 				string command;
 
 				if(config.ForceShutdown)
 				{
-					command = "shutdown /s /f /t 0"; // Force immediate shutdown
+					command = "shutdown /s /f /t 0"; // 強制立即關機
 				}
 				else
 				{
-					// Normal shutdown command (using /s parameter for shutdown)
+					// 一般關機指令 (使用 /s 參數關機)
 					command = "shutdown /s /t 0";
 				}
 
+				LogMessage($"執行關機命令: {command}");
 				Console.WriteLine($"Executing shutdown command: {command}");
 
-				ProcessStartInfo processInfo = new ProcessStartInfo("cmd.exe", $"/c {command}") { CreateNoWindow = true, UseShellExecute = false };
+				// 使用管理員權限執行
+				ProcessStartInfo processInfo = new ProcessStartInfo("cmd.exe", $"/c {command}") { 
+					CreateNoWindow = true, 
+					UseShellExecute = true,
+					Verb = "runas" 
+				};
 
 				Process.Start(processInfo);
+				LogMessage("關機命令已發送!");
+				
+				// 確保程序有足夠時間執行
+				Thread.Sleep(3000);
 			}
 			catch(Exception ex)
 			{
+				string errorMsg = $"手動關機執行錯誤: {ex.Message}";
+				LogMessage(errorMsg);
 				Console.WriteLine($"Error executing shutdown: {ex.Message}");
+				
+				// 嘗試使用替代方法
+				try {
+					LogMessage("嘗試使用直接方法關機...");
+					ExecuteDirectShutdown();
+				}
+				catch (Exception ex2) {
+					LogMessage($"所有關機方法都失敗: {ex2.Message}");
+				}
 			}
 		}
 	}
