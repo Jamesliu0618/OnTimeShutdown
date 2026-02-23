@@ -18,7 +18,7 @@ namespace Showdown
 
 		public override string ToString()
 		{
-			return $"Shutdown time set to: {Hour}:{Minute}:{Second}" + $"{(ForceShutdown ? " (Force Shutdown)" : "")}" + $", Auto shutdown: {(EnableAutoShutdown ? "Enabled" : "Disabled")}";
+			return $"設定關機時間為: {Hour}:{Minute}:{Second}" + $"{(ForceShutdown ? " (強制關機)" : "")}" + $", 自動關機: {(EnableAutoShutdown ? "已啟用" : "已停用")}";
 		}
 	}
 
@@ -31,7 +31,8 @@ namespace Showdown
         // 修改設定檔和日誌檔案路徑，使用執行檔所在目錄
         private static readonly string ExecutablePath = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) ?? "";
         private static readonly string ConfigPath = Path.Combine(ExecutablePath, "shutdown_config.json");
-        private static readonly string LogPath = Path.Combine(ExecutablePath, "shutdown_log.txt");
+        // 每日一個日誌檔案
+        private static string LogPath => Path.Combine(ExecutablePath, $"shutdown_log_{DateTime.Now:yyyy-MM-dd}.txt");
         private static System.Timers.Timer? shutdownTimer; // 允許為 null
         private static NotifyIcon? trayIcon; // 允許為 null
         private static ShutdownConfig? config; // 允許為 null
@@ -55,7 +56,7 @@ namespace Showdown
 			AllocConsole();
 
 			Console.WriteLine("=================================");
-			Console.WriteLine("Auto Shutdown Tool - v1.1");
+			Console.WriteLine("自動關機工具 - v1.2");
 			Console.WriteLine("=================================");
 
             // 初始化日誌檔案
@@ -79,8 +80,8 @@ namespace Showdown
 			// Check command line arguments
             if (testShutdown)
 			{
-				Console.WriteLine("Testing shutdown functionality...");
-				Console.WriteLine("Will attempt to execute shutdown command in 5 seconds");
+				Console.WriteLine("測試關機功能...");
+				Console.WriteLine("將在 5 秒後嘗試執行關機命令");
                 LogMessage("測試關機功能...");
 				Thread.Sleep(5000);
 				ExecuteDirectShutdown();
@@ -88,7 +89,7 @@ namespace Showdown
 			}
 
 			// Immediately check time and display next shutdown time
-			Console.WriteLine("Checking current time and shutdown settings...");
+			Console.WriteLine("檢查目前時間和關機設定...");
             if (config != null)
             {
 			ShowNextShutdownTime(config);
@@ -107,34 +108,34 @@ namespace Showdown
 
 		private static void InitializeSystemTrayIcon()
 		{
-			trayIcon = new NotifyIcon { Icon = SystemIcons.Application, Text = "Auto Shutdown Tool", Visible = true };
+			trayIcon = new NotifyIcon { Icon = SystemIcons.Application, Text = "自動關機工具", Visible = true };
 
 			// Create context menu
 			ContextMenuStrip menu = new ContextMenuStrip();
 
-			menu.Items.Add("Show Console", null, OnShowConsole);
-			menu.Items.Add("Hide Console", null, OnHideConsole);
+			menu.Items.Add("顯示主控台", null, OnShowConsole);
+			menu.Items.Add("隱藏主控台", null, OnHideConsole);
 			menu.Items.Add("-"); // Separator
 
-            menu.Items.Add("Show Configuration", null, OnShowConfig);
-			menu.Items.Add("Modify Shutdown Time", null, OnModifyTime);
+            menu.Items.Add("顯示設定", null, OnShowConfig);
+			menu.Items.Add("修改關機時間", null, OnModifyTime);
 
             if (config != null)
             {
-			ToolStripMenuItem autoShutdownItem = new ToolStripMenuItem("Enable Auto Shutdown");
+			ToolStripMenuItem autoShutdownItem = new ToolStripMenuItem("啟用自動關機");
 			autoShutdownItem.Checked = config.EnableAutoShutdown;
 			autoShutdownItem.Click += OnToggleAutoShutdown;
 			menu.Items.Add(autoShutdownItem);
 
-			ToolStripMenuItem forceShutdownItem = new ToolStripMenuItem("Force Shutdown");
+			ToolStripMenuItem forceShutdownItem = new ToolStripMenuItem("強制關機");
 			forceShutdownItem.Checked = config.ForceShutdown;
 			forceShutdownItem.Click += OnToggleForceShutdown;
 			menu.Items.Add(forceShutdownItem);
             }
 
 			menu.Items.Add("-"); // Separator
-			menu.Items.Add("Shutdown Now", null, OnShutdownNow);
-            menu.Items.Add("Exit", null, OnExit);
+			menu.Items.Add("立即關機", null, OnShutdownNow);
+            menu.Items.Add("結束", null, OnExit);
 
 			trayIcon.ContextMenuStrip = menu;
 
@@ -162,12 +163,12 @@ namespace Showdown
 			ShowConsoleWindow();
             if (config != null)
             {
-			Console.WriteLine($"Current configuration: {config}");
+			Console.WriteLine($"目前設定: {config}");
 			ShowNextShutdownTime(config);
             }
             else
             {
-                Console.WriteLine("Configuration is not loaded yet.");
+                Console.WriteLine("設定檔尚未載入。");
             }
 		}
 
@@ -179,12 +180,12 @@ namespace Showdown
 			ModifyShutdownTime(config);
 			SaveConfig(config);
 
-			// Update checked state of menu items
+			// 更新菜單項的勾選狀態
 			UpdateTrayMenuItems();
             }
             else
             {
-                Console.WriteLine("Configuration is not loaded yet.");
+                Console.WriteLine("設定檔尚未載入。");
             }
 		}
 
@@ -195,7 +196,7 @@ namespace Showdown
                 if (config != null)
 			{
 				config.EnableAutoShutdown = !config.EnableAutoShutdown;
-				Console.WriteLine($"Auto shutdown set to: {(config.EnableAutoShutdown ? "Enabled" : "Disabled")}");
+				Console.WriteLine($"自動關機設定為: {(config.EnableAutoShutdown ? "已啟用" : "已停用")}");
 				SaveConfig(config);
 
 				// Update menu item checked state
@@ -214,7 +215,7 @@ namespace Showdown
                 if (config != null)
 			{
 				config.ForceShutdown = !config.ForceShutdown;
-				Console.WriteLine($"Force shutdown set to: {(config.ForceShutdown ? "Enabled" : "Disabled")}");
+				Console.WriteLine($"強制關機設定為: {(config.ForceShutdown ? "已啟用" : "已停用")}");
 				SaveConfig(config);
 
 				// Update menu item checked state
@@ -363,12 +364,12 @@ namespace Showdown
 				JsonSerializerOptions options = new JsonSerializerOptions { WriteIndented = true };
                 string json = JsonSerializer.Serialize(config, options);
 				File.WriteAllText(ConfigPath, json);
-				Console.WriteLine("Configuration saved");
+				Console.WriteLine("設定已保存");
 
-				// Show updated shutdown time
+				// 顯示更新後的關機時間
 				ShowNextShutdownTime(config);
 
-				// Restart the shutdown timer with updated settings
+				// 用更新的設定重新啟動關機計時器
 				RestartShutdownTimer(config);
 
 				// Update tray icon tooltip
@@ -376,7 +377,7 @@ namespace Showdown
 			}
             catch (Exception ex)
 			{
-				Console.WriteLine($"Error saving configuration: {ex.Message}");
+				Console.WriteLine($"設定檔保存錯誤: {ex.Message}");
 			}
 		}
 
@@ -403,7 +404,7 @@ namespace Showdown
             DateTime now = DateTime.Now;
 			DateTime shutdownTime = new DateTime(now.Year, now.Month, now.Day, config.Hour, config.Minute, config.Second);
 
-			// If the shutdown time is in the past for today, set it for tomorrow
+			// 如果關機時間已經過了，設為明天
             if (now > shutdownTime)
 			{
 				shutdownTime = shutdownTime.AddDays(1);
@@ -416,14 +417,14 @@ namespace Showdown
 		{
             if (!config.EnableAutoShutdown)
 			{
-				Console.WriteLine("Auto shutdown is currently DISABLED");
+				Console.WriteLine("自動關機功能目前已停用");
 				return;
 			}
 
             DateTime now = DateTime.Now;
 			DateTime shutdownTime = GetNextShutdownTime(config);
 
-			// Update tray icon tooltip with shutdown time
+			// 用關機時間更新系統托盤圖示的提示文字
 			UpdateTrayIconTooltip();
 
 			// If shutdown time is tomorrow
@@ -463,7 +464,7 @@ namespace Showdown
 			shutdownTimer.AutoReset = true;
 			shutdownTimer.Start();
 
-            Console.WriteLine("Shutdown timer started - checking every second");
+            Console.WriteLine("關機計時器已啟動 - 每秒檢查一次");
 
 			// Do initial check immediately
 			CheckShutdownTime(config);
@@ -572,12 +573,12 @@ namespace Showdown
 					// 如果時間低於10秒，準備關機
                     if ((remainingTime.TotalSeconds <= 10) && (remainingTime.TotalSeconds > 0))
 					{
-                        Console.WriteLine($"Shutdown time approaching! Will shutdown at {scheduledShutdownTime.ToString("HH:mm:ss")} ({remainSeconds} seconds remaining)");
+                        Console.WriteLine($"關機時間即將到達! 將在 {scheduledShutdownTime.ToString("HH:mm:ss")} 執行關機 (剩餘 {remainSeconds} 秒)");
 
 						// Show balloon tip
                         if (trayIcon != null)
 						{
-							trayIcon.ShowBalloonTip(5000, "Shutdown Imminent", $"Computer will shutdown in {remainSeconds} seconds.", ToolTipIcon.Warning);
+							trayIcon.ShowBalloonTip(5000, "關機即將執行", $"電腦將在 {remainSeconds} 秒後關機。", ToolTipIcon.Warning);
 						}
 
 						// 如果時間很接近（2秒以內），執行關機
@@ -594,7 +595,7 @@ namespace Showdown
 							// 最後通知
                             if (trayIcon != null)
 							{
-								trayIcon.ShowBalloonTip(3000, "Shutting Down", "Computer is now shutting down...", ToolTipIcon.Info);
+								trayIcon.ShowBalloonTip(3000, "關機中", "電腦正在關機...", ToolTipIcon.Info);
 							}
 
 							// 立即執行關機，不等待
@@ -614,7 +615,7 @@ namespace Showdown
 					// 如果在1分鐘內關機
                     else if ((remainingTime.TotalMinutes <= 1) && (remainingTime.TotalSeconds > 0))
 					{
-						Console.WriteLine($"Shutdown time approaching! Will shutdown in {remainMinutes} minutes and {remainSeconds} seconds");
+						Console.WriteLine($"關機時間即將到達! 將在 {remainMinutes} 分鐘 {remainSeconds} 秒後執行關機");
 					}
 				}
 			}
@@ -623,8 +624,8 @@ namespace Showdown
 				string errorMsg = $"檢查關機時間發生錯誤: {ex.Message}";
 				LogMessage(errorMsg);
                 LogMessage($"詳細錯誤: {ex}");
-				Console.WriteLine($"Error checking shutdown time: {ex.Message}");
-				Console.WriteLine($"Error details: {ex}");
+				Console.WriteLine($"檢查關機時間錯誤: {ex.Message}");
+				Console.WriteLine($"錯誤詳情: {ex}");
 			}
 		}
 
@@ -633,154 +634,36 @@ namespace Showdown
 		{
 			try
 			{
-                // 首先在控制台輸出路徑信息，這不依賴於日誌文件
-                Console.WriteLine($"===== 路徑信息 =====");
-                Console.WriteLine($"執行檔路徑: {ExecutablePath}");
-                Console.WriteLine($"設定檔路徑: {ConfigPath}");
-                Console.WriteLine($"日誌檔案路徑: {LogPath}");
-                
-                // 確保日誌檔案所在目錄存在
                 string? logDirectory = Path.GetDirectoryName(LogPath);
                 if (!string.IsNullOrEmpty(logDirectory) && !Directory.Exists(logDirectory))
                 {
                     Directory.CreateDirectory(logDirectory);
-                    Console.WriteLine($"建立日誌目錄: {logDirectory}");
                 }
-                
-                // 定義日誌檔案大小限制 (10MB)
-                const long MaxLogFileSize = 10 * 1024 * 1024;
-
-                bool shouldCreateNewLog = false;
-                string rotatedLogPath = string.Empty;
-
-                // 檢查日誌檔案是否存在
-                if (File.Exists(LogPath))
-                {
-                    FileInfo logFileInfo = new FileInfo(LogPath);
-
-                    // 若檔案超過大小限制，進行日誌輪替
-                    if (logFileInfo.Length > MaxLogFileSize)
-                    {
-                        shouldCreateNewLog = true;
-                        // 建立以日期時間為檔名的舊日誌檔案
-                        rotatedLogPath = Path.Combine(
-                            Path.GetDirectoryName(LogPath) ?? "",
-                            $"shutdown_log_{DateTime.Now:yyyyMMdd_HHmmss}.old.txt");
-
-                        try
-                        {
-                            // 重新命名現有日誌檔案
-                            File.Move(LogPath, rotatedLogPath);
-                            Console.WriteLine($"日誌檔案過大，已重新命名為: {rotatedLogPath}");
-                        }
-                        catch (Exception renameEx)
-                        {
-                            // 若重新命名失敗，則直接清空檔案
-                            Console.WriteLine($"無法重新命名日誌檔案: {renameEx.Message}，將清空檔案內容");
-                            File.WriteAllText(LogPath, string.Empty);
-                        }
-                    }
-                }
-                else
-                {
-                    // 若檔案不存在，需要建立新檔案
-                    shouldCreateNewLog = true;
-                    Console.WriteLine($"日誌檔案不存在，將創建新檔案");
-                }
-
-                // 建立新日誌檔案
-                if (shouldCreateNewLog)
-                {
-                    string timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
-                    string initialLogEntry = $"[{timestamp}] 日誌檔案初始化成功";
-                    if (!string.IsNullOrEmpty(rotatedLogPath))
-                    {
-                        initialLogEntry += $" (舊日誌已保存至 {Path.GetFileName(rotatedLogPath)})";
-                    }
-                    
-                    // 添加路徑信息到日誌
-                    initialLogEntry += Environment.NewLine + 
-                        $"[{timestamp}] 執行檔路徑: {ExecutablePath}" + Environment.NewLine + 
-                        $"[{timestamp}] 設定檔路徑: {ConfigPath}" + Environment.NewLine + 
-                        $"[{timestamp}] 日誌檔案路徑: {LogPath}";
-                    
-                    File.WriteAllText(LogPath, initialLogEntry + Environment.NewLine);
-                    Console.WriteLine("日誌檔案初始化成功");
-                }
-
-                // 測試寫入權限 - 直接寫入檔案，不使用LogMessage方法避免循環依賴
-                string startupMessage = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] 程式啟動，日誌系統初始化";
-                File.AppendAllText(LogPath, startupMessage + Environment.NewLine);
-                Console.WriteLine(startupMessage);
-                
-                // 寫入路徑資訊
-                string pathInfo = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] 使用中路徑 - 執行檔: {ExecutablePath}" + Environment.NewLine +
-                                 $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] 使用中路徑 - 設定檔: {ConfigPath}" + Environment.NewLine +
-                                 $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] 使用中路徑 - 日誌檔: {LogPath}";
-                File.AppendAllText(LogPath, pathInfo + Environment.NewLine);
-                Console.WriteLine(pathInfo.Replace(Environment.NewLine, " | "));
+                LogMessage("程式啟動，日誌系統初始化");
+                LogMessage($"執行檔路徑: {ExecutablePath}");
+                LogMessage($"設定檔路徑: {ConfigPath}");
+                LogMessage($"日誌檔案路徑: {LogPath}");
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"無法初始化日誌檔案: {ex.Message}");
-                Console.WriteLine($"詳細錯誤: {ex}");
-
-                // 嘗試使用備用路徑 (當前目錄)
                 try
                 {
-                    string alternativeLogPath = Path.Combine(Environment.CurrentDirectory, "shutdown_log_alt.txt");
-                    File.WriteAllText(alternativeLogPath, $"[{DateTime.Now}] 原始日誌初始化失敗，使用替代路徑" + Environment.NewLine);
-                    File.AppendAllText(alternativeLogPath, $"[{DateTime.Now}] 執行檔路徑: {ExecutablePath}" + Environment.NewLine);
-                    File.AppendAllText(alternativeLogPath, $"[{DateTime.Now}] 設定檔路徑: {ConfigPath}" + Environment.NewLine);
-                    File.AppendAllText(alternativeLogPath, $"[{DateTime.Now}] 日誌檔案路徑: {LogPath}" + Environment.NewLine);
-                    File.AppendAllText(alternativeLogPath, $"[{DateTime.Now}] 錯誤訊息: {ex.Message}" + Environment.NewLine);
-                    Console.WriteLine($"已使用替代路徑寫入日誌: {alternativeLogPath}");
+                    string altPath = Path.Combine(Environment.CurrentDirectory, $"shutdown_log_{DateTime.Now:yyyy-MM-dd}_alt.txt");
+                    File.AppendAllText(altPath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] 日誌初始化失敗: {ex.Message}\r\n");
                 }
-                catch (Exception altEx)
-                {
-                    // 忽略備用路徑的錯誤
-                    Console.WriteLine($"備用日誌也失敗: {altEx.Message}");
-				}
-			}
-		}
+                catch { }
+            }
+        }
 		
-		// 新增記錄方法
+		// 記錄訊息至每日日誌檔案
 		private static void LogMessage(string message)
 		{
 			try
 			{
-                // 寫入前檢查日誌檔案大小，若超過10MB則自動切換
-                const long MaxLogFileSize = 10 * 1024 * 1024;
-                if (File.Exists(LogPath))
-                {
-                    FileInfo logFileInfo = new FileInfo(LogPath);
-                    if (logFileInfo.Length > MaxLogFileSize)
-                    {
-                        string rotatedLogPath = Path.Combine(
-                            Path.GetDirectoryName(LogPath) ?? "",
-                            $"shutdown_log_{DateTime.Now:yyyyMMdd_HHmmss}.old.txt");
-                        try
-                        {
-                            File.Move(LogPath, rotatedLogPath);
-                            Console.WriteLine($"日誌檔案過大，自動切換為: {rotatedLogPath}");
-                            File.WriteAllText(LogPath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] 日誌檔案自動切換 (舊檔: {Path.GetFileName(rotatedLogPath)})\n");
-                        }
-                        catch (Exception renameEx)
-                        {
-                            Console.WriteLine($"無法自動切換日誌檔案: {renameEx.Message}，將清空檔案內容");
-                            File.WriteAllText(LogPath, string.Empty);
-                        }
-                    }
-                }
                 string logEntry = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}] {message}";
                 File.AppendAllText(LogPath, logEntry + "\r\n");
-                // 也輸出到 Console 方便即時觀察
-                Console.WriteLine(logEntry);
 			}
-			catch (Exception ex)
-			{
-                Console.WriteLine($"[LogMessage Exception]: {ex.Message}");
-			}
+			catch { }
 		}
 		
 		private static void RestartShutdownTimer(ShutdownConfig config)
@@ -791,9 +674,9 @@ namespace Showdown
 
 		private static void ModifyShutdownTime(ShutdownConfig config)
 		{
-            Console.WriteLine("Modify shutdown time (press Enter to keep current value)");
+            Console.WriteLine("修改關機時間 (按 Enter 保持目前值)");
 
-            Console.Write($"Hour (0-23) [{config.Hour}]: ");
+            Console.Write($"小時 (0-23) [{config.Hour}]: ");
 			string hourInput = Console.ReadLine() ?? "";
 
             if (!string.IsNullOrWhiteSpace(hourInput) && int.TryParse(hourInput, out int hour) && (hour >= 0) && (hour <= 23))
@@ -801,7 +684,7 @@ namespace Showdown
 				config.Hour = hour;
 			}
 
-			Console.Write($"Minute (0-59) [{config.Minute}]: ");
+			Console.Write($"分鐘 (0-59) [{config.Minute}]: ");
 			string minuteInput = Console.ReadLine() ?? "";
 
             if (!string.IsNullOrWhiteSpace(minuteInput) && int.TryParse(minuteInput, out int minute) && (minute >= 0) && (minute <= 59))
@@ -809,7 +692,7 @@ namespace Showdown
 				config.Minute = minute;
 			}
 
-			Console.Write($"Second (0-59) [{config.Second}]: ");
+			Console.Write($"秒 (0-59) [{config.Second}]: ");
 			string secondInput = Console.ReadLine() ?? "";
 
             if (!string.IsNullOrWhiteSpace(secondInput) && int.TryParse(secondInput, out int second) && (second >= 0) && (second <= 59))
@@ -817,7 +700,7 @@ namespace Showdown
 				config.Second = second;
 			}
 
-			Console.WriteLine($"New shutdown time set to: {config.Hour}:{config.Minute}:{config.Second}");
+			Console.WriteLine($"新的關機時間已設定為: {config.Hour}:{config.Minute}:{config.Second}");
 		}
 
 		private static void ExecuteShutdown(ShutdownConfig config)
@@ -848,7 +731,7 @@ namespace Showdown
 				}
 
 				LogMessage($"執行關機命令: {command}");
-				Console.WriteLine($"Executing shutdown command: {command}");
+				Console.WriteLine($"執行關機命令: {command}");
 
 				// 使用管理員權限執行
                 ProcessStartInfo processInfo = new ProcessStartInfo("cmd.exe", $"/c {command}")
@@ -868,7 +751,7 @@ namespace Showdown
 			{
 				string errorMsg = $"手動關機執行錯誤: {ex.Message}";
 				LogMessage(errorMsg);
-				Console.WriteLine($"Error executing shutdown: {ex.Message}");
+				Console.WriteLine($"執行關機錯誤: {ex.Message}");
 				
 				// 嘗試使用替代方法
                 try
