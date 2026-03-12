@@ -7,6 +7,13 @@
         <Nullable>enable</Nullable>
         <LangVersion>latest</LangVersion>
         <UseWindowsForms>true</UseWindowsForms>
+        <ApplicationIcon>Resources\app.ico</ApplicationIcon>
     </PropertyGroup>
+
+    <ItemGroup>
+        <None Update="Resources\tray.ico">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+    </ItemGroup>
 
 </Project>

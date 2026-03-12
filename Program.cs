@@ -34,11 +34,15 @@ namespace Showdown
 		// 修改設定檔和日誌檔案路徑，使用執行檔所在目錄
 		private static readonly string               ExecutablePath = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) ?? "";
 		private static readonly string               ConfigPath     = Path.Combine(ExecutablePath, "shutdown_config.json");
+		private static readonly string               TrayIconPath   = Path.Combine(ExecutablePath, "Resources", "tray.ico");
 		private static          System.Timers.Timer? shutdownTimer; // 允許為 null
 		private static          NotifyIcon?          trayIcon;      // 允許為 null
+		private static          Icon?                trayIconResource;
 		private static          ShutdownConfig?      config;        // 允許為 null
 		private static readonly object               configLock = new object();
 		private static          int                  shutdownAttempts; // 關機嘗試次數
+		private static          DateTime?            postponedShutdownTime;
+		private static          int                  shutdownPromptActive;
 
 		// 每日一個日誌檔案
 		private static string LogPath { get => Path.Combine(ExecutablePath, $"shutdown_log_{DateTime.Now:yyyy-MM-dd}.txt"); }
@@ -113,7 +117,7 @@ namespace Showdown
 		{
 			trayIcon = new NotifyIcon
 					   {
-						   Icon    = SystemIcons.Application,
+						   Icon    = LoadTrayIcon(),
 						   Text    = "自動關機工具",
 						   Visible = true
 					   };
@@ -149,6 +153,35 @@ namespace Showdown
 
 			// Double-click to toggle console visibility
 			trayIcon.DoubleClick += OnTrayIconDoubleClick;
+		}
+
+		private static Icon LoadTrayIcon()
+		{
+			if(!File.Exists(TrayIconPath))
+			{
+				LogMessage($"找不到系統匣圖示，改用預設圖示: {TrayIconPath}");
+				return SystemIcons.Application;
+			}
+
+			try
+			{
+				trayIconResource = new Icon(TrayIconPath);
+				return trayIconResource;
+			}
+			catch(IOException ex)
+			{
+				LogMessage($"載入系統匣圖示失敗，改用預設圖示: {ex.Message}");
+			}
+			catch(UnauthorizedAccessException ex)
+			{
+				LogMessage($"載入系統匣圖示失敗，改用預設圖示: {ex.Message}");
+			}
+			catch(ArgumentException ex)
+			{
+				LogMessage($"載入系統匣圖示失敗，改用預設圖示: {ex.Message}");
+			}
+
+			return SystemIcons.Application;
 		}
 
 		private static void OnTrayIconDoubleClick(object? sender, EventArgs e)
@@ -252,6 +285,9 @@ namespace Showdown
 				trayIcon.Visible = false;
 				trayIcon.Dispose();
 			}
+
+			trayIconResource?.Dispose();
+			trayIconResource = null;
 
 			// Stop the shutdown timer
 			if(shutdownTimer != null)
@@ -399,7 +435,7 @@ namespace Showdown
 			if((trayIcon != null) && (config != null))
 			{
 				DateTime shutdownTime = GetNextShutdownTime(config);
-				string   status       = config.EnableAutoShutdown ? $"Next shutdown: {shutdownTime.ToShortTimeString()}" : "Auto shutdown disabled";
+				string   status       = config.EnableAutoShutdown ? $"Next shutdown: {shutdownTime:HH:mm:ss}" : "Auto shutdown disabled";
 
 				trayIcon.Text = $"Auto Shutdown Tool - {status}";
 			}
@@ -415,6 +451,20 @@ namespace Showdown
 			}
 
 			DateTime now          = DateTime.Now;
+
+			lock(configLock)
+			{
+				if(postponedShutdownTime.HasValue)
+				{
+					if(now <= postponedShutdownTime.Value)
+					{
+						return postponedShutdownTime.Value;
+					}
+
+					postponedShutdownTime = null;
+				}
+			}
+
 			DateTime shutdownTime = new DateTime(now.Year, now.Month, now.Day, config.Hour, config.Minute, config.Second);
 
 			// 如果關機時間已經過了，設為明天
@@ -448,7 +498,212 @@ namespace Showdown
 			else
 			{
 				TimeSpan timeLeft = shutdownTime - now;
+
+				lock(configLock)
+				{
+					if(postponedShutdownTime.HasValue && (shutdownTime == postponedShutdownTime.Value))
+					{
+						LogMessage($"本次關機已順延至今天 {shutdownTime:HH:mm:ss} (剩餘 {timeLeft.Hours}小時 {timeLeft.Minutes}分鐘 {timeLeft.Seconds}秒)");
+						return;
+					}
+				}
+
 				LogMessage($"下次預定關機: 今天 {shutdownTime.ToShortTimeString()} (剩餘 {timeLeft.Hours}小時 {timeLeft.Minutes}分鐘 {timeLeft.Seconds}秒)");
+			}
+		}
+
+		private static void PostponeShutdownByFiveMinutes()
+		{
+			lock(configLock)
+			{
+				postponedShutdownTime = DateTime.Now.AddMinutes(5);
+				LogMessage($"使用者選擇順延關機，本次關機延後至 {postponedShutdownTime.Value:yyyy-MM-dd HH:mm:ss}");
+			}
+
+			if(config != null)
+			{
+				ShowNextShutdownTime(config);
+			}
+
+			UpdateTrayIconTooltip();
+		}
+
+		private static bool ShowShutdownPrompt(DateTime scheduledShutdownTime)
+		{
+			bool shouldPostpone = false;
+			Exception? promptException = null;
+
+			Thread promptThread = new Thread(() =>
+			{
+				try
+				{
+					using Form promptForm = new Form
+						  {
+							  Text            = "自動關機提醒",
+							  Width           = 420,
+							  Height          = 220,
+							  FormBorderStyle = FormBorderStyle.FixedDialog,
+							  MaximizeBox     = false,
+							  MinimizeBox     = false,
+							  StartPosition   = FormStartPosition.CenterScreen,
+							  TopMost         = true,
+							  ShowInTaskbar   = true
+						  };
+
+					using Label titleLabel = new Label
+						  {
+							  Left      = 20,
+							  Top       = 20,
+							  Width     = 360,
+							  Height    = 55,
+							  Text      = $"現在到達預定關機時間 {scheduledShutdownTime:HH:mm:ss}。\r\n是否要順延 5 分鐘？",
+							  Font      = new Font(SystemFonts.DefaultFont.FontFamily, 11, FontStyle.Bold),
+							  TextAlign = ContentAlignment.MiddleLeft
+						  };
+
+					using Label countdownLabel = new Label
+						  {
+							  Left      = 20,
+							  Top       = 85,
+							  Width     = 360,
+							  Height    = 30,
+							  TextAlign = ContentAlignment.MiddleLeft
+						  };
+
+					using Button postponeButton = new Button
+						  {
+							  Text         = "順延 5 分鐘",
+							  Width        = 130,
+							  Height       = 35,
+							  Left         = 70,
+							  Top          = 130,
+							  DialogResult = DialogResult.Yes
+						  };
+
+					using Button shutdownButton = new Button
+						  {
+							  Text         = "照常關機",
+							  Width        = 130,
+							  Height       = 35,
+							  Left         = 220,
+							  Top          = 130,
+							  DialogResult = DialogResult.No
+						  };
+
+					int remainingSeconds = 30;
+
+					void UpdateCountdownText()
+					{
+						countdownLabel.Text = $"若 {remainingSeconds} 秒內未選擇，系統將照常執行關機。";
+					}
+
+					using System.Windows.Forms.Timer countdownTimer = new System.Windows.Forms.Timer
+						  {
+							  Interval = 1000
+						  };
+
+					countdownTimer.Tick += (_, _) =>
+					{
+						remainingSeconds--;
+
+						if(remainingSeconds <= 0)
+						{
+							countdownTimer.Stop();
+							promptForm.DialogResult = DialogResult.No;
+							promptForm.Close();
+							return;
+						}
+
+						UpdateCountdownText();
+					};
+
+					promptForm.Controls.Add(titleLabel);
+					promptForm.Controls.Add(countdownLabel);
+					promptForm.Controls.Add(postponeButton);
+					promptForm.Controls.Add(shutdownButton);
+					promptForm.AcceptButton = postponeButton;
+					promptForm.CancelButton = shutdownButton;
+					promptForm.Shown += (_, _) =>
+					{
+						UpdateCountdownText();
+						countdownTimer.Start();
+					};
+					promptForm.FormClosed += (_, _) => countdownTimer.Stop();
+
+					shouldPostpone = promptForm.ShowDialog() == DialogResult.Yes;
+				}
+				catch(Exception ex)
+				{
+					promptException = ex;
+				}
+			});
+
+			promptThread.SetApartmentState(ApartmentState.STA);
+			promptThread.Start();
+			promptThread.Join();
+
+			if(promptException != null)
+			{
+				throw new InvalidOperationException("顯示關機提醒視窗失敗。", promptException);
+			}
+
+			return shouldPostpone;
+		}
+
+		private static void HandleShutdownDue(ShutdownConfig config, DateTime currentTime, DateTime scheduledShutdownTime)
+		{
+			if(Interlocked.CompareExchange(ref shutdownPromptActive, 1, 0) != 0)
+			{
+				return;
+			}
+
+			try
+			{
+				LogMessage("============================================================");
+				LogMessage($"預定關機時間已到達 (目前時間: {currentTime:yyyy-MM-dd HH:mm:ss.fff})");
+				LogMessage($"預定關機時間: {scheduledShutdownTime:yyyy-MM-dd HH:mm:ss}");
+				LogMessage("顯示 30 秒確認視窗，允許使用者順延 5 分鐘");
+				LogMessage("============================================================");
+
+				if(shutdownTimer != null)
+				{
+					shutdownTimer.Stop();
+				}
+
+				if(trayIcon != null)
+				{
+					trayIcon.ShowBalloonTip(5000, "自動關機提醒", "30 秒內可選擇順延 5 分鐘，否則將照常關機。", ToolTipIcon.Warning);
+				}
+
+				bool shouldPostpone = ShowShutdownPrompt(scheduledShutdownTime);
+
+				if(shouldPostpone)
+				{
+					PostponeShutdownByFiveMinutes();
+
+					if(shutdownTimer != null)
+					{
+						shutdownTimer.Start();
+					}
+
+					return;
+				}
+
+				LogMessage("使用者未順延關機，將立即執行關機命令。");
+
+				if(trayIcon != null)
+				{
+					trayIcon.ShowBalloonTip(3000, "電腦關機", "電腦正在關機中...", ToolTipIcon.Info);
+				}
+
+				config.ForceShutdown = true;
+				LogMessage("準備呼叫 ExecuteDirectShutdown() 方法");
+				ExecuteDirectShutdown();
+				LogMessage("已呼叫 ExecuteDirectShutdown() 方法");
+			}
+			finally
+			{
+				Interlocked.Exchange(ref shutdownPromptActive, 0);
 			}
 		}
 
@@ -488,6 +743,11 @@ namespace Showdown
 		{
 			try
 			{
+				if(Volatile.Read(ref shutdownPromptActive) == 1)
+				{
+					return;
+				}
+
 				// 取得一次當前時間以及關機時間，避免重複計算
 				DateTime currentTime           = DateTime.Now;
 				DateTime scheduledShutdownTime = GetNextShutdownTime(config);
@@ -513,6 +773,8 @@ namespace Showdown
 					LogMessage($"預定關機時間: {scheduledShutdownTime:yyyy-MM-dd HH:mm:ss}");
 					LogMessage($"距離關機剩餘秒數: {remainingTime.TotalSeconds:F2}");
 				}
+
+				bool shouldHandleShutdownDue = false;
 
 				lock(configLock)
 				{
@@ -546,39 +808,7 @@ namespace Showdown
 					// 如果時間已到或已過（允許0.5秒誤差），立即執行關機
 					if((totalSeconds <= 0.5) && (totalSeconds > -60)) // 允許0.5秒誤差，且不超過1分鐘的過期時間
 					{
-						LogMessage("============================================================");
-						LogMessage($"預定關機時間已到達 (剩餘秒數: {totalSeconds:F2})，立即執行關機命令");
-						LogMessage($"目前系統時間: {currentTime:yyyy-MM-dd HH:mm:ss.fff}");
-						LogMessage($"預定關機時間: {scheduledShutdownTime:yyyy-MM-dd HH:mm:ss}");
-						LogMessage("============================================================");
-
-						LogMessage("預定關機時間已到達，準備關機...");
-
-						// 顯示通知
-						if(trayIcon != null)
-						{
-							trayIcon.ShowBalloonTip(3000, "電腦關機", "電腦正在關機中...", ToolTipIcon.Info);
-						}
-
-						// 強制設定為使用強制關機參數以確保關機執行
-						config.ForceShutdown = true;
-
-						// 執行關機前記錄
-						LogMessage("準備呼叫 ExecuteDirectShutdown() 方法");
-
-						// 執行關機，不等待
-						ExecuteDirectShutdown();
-
-						// 記錄關機方法已被呼叫
-						LogMessage("已呼叫 ExecuteDirectShutdown() 方法");
-
-						// 停止計時器
-						if(shutdownTimer != null)
-						{
-							shutdownTimer.Stop();
-							LogMessage("計時器已停止");
-						}
-						return;
+						shouldHandleShutdownDue = true;
 					}
 
 					// 如果時間低於10秒，準備關機
@@ -595,32 +825,7 @@ namespace Showdown
 						// 如果時間很接近（2秒以內），執行關機
 						if(remainingTime.TotalSeconds <= 2)
 						{
-							LogMessage("============================================================");
-							LogMessage("關機時間到達2秒內，立即執行關機");
-							LogMessage($"目前系統時間: {currentTime:yyyy-MM-dd HH:mm:ss.fff}");
-							LogMessage($"預定關機時間: {scheduledShutdownTime:yyyy-MM-dd HH:mm:ss}");
-							LogMessage($"剩餘時間: {remainingTime.TotalSeconds:F2} 秒");
-							LogMessage("============================================================");
-							LogMessage("執行關機命令...");
-
-							// 最後通知
-							if(trayIcon != null)
-							{
-								trayIcon.ShowBalloonTip(3000, "關機中", "電腦正在關機...", ToolTipIcon.Info);
-							}
-
-							// 立即執行關機，不等待
-							config.ForceShutdown = true; // 確保使用強制關機參數
-							LogMessage("準備呼叫 ExecuteDirectShutdown() 方法");
-							ExecuteDirectShutdown();
-							LogMessage("已呼叫 ExecuteDirectShutdown() 方法");
-
-							// 停止計時器
-							if(shutdownTimer != null)
-							{
-								shutdownTimer.Stop();
-								LogMessage("計時器已停止");
-							}
+							shouldHandleShutdownDue = true;
 						}
 					}
 
@@ -629,6 +834,11 @@ namespace Showdown
 					{
 						LogMessage($"關機時間即將到達! 將在 {remainMinutes} 分鐘 {remainSeconds} 秒後執行關機");
 					}
+				}
+
+				if(shouldHandleShutdownDue)
+				{
+					HandleShutdownDue(config, currentTime, scheduledShutdownTime);
 				}
 			}
 			catch(Exception ex)
